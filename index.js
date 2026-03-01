@@ -21,7 +21,7 @@ app.use((req, res, next) => {
 // ==========================================================
 const MEMBERS = {
   'whatsapp:+6285878894158':  'You',
-  'whatsapp:+6281224803690': 'Spouse',
+  'whatsapp:+6281228856391': 'Spouse',
 };
 
 const TARGET_DISCRETIONARY = 500; // Euro
@@ -230,18 +230,13 @@ async function buildBudgetStatus() {
 
 async function buildRunRate() {
   const { from, to } = getMonthBounds(0);
-  const now = new Date();
-  const dD  = now.getDate();
-  const dM  = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-  const [expR, incR] = await Promise.all([
-    dbQuery(`SELECT COALESCE(SUM(amount),0) t FROM transactions WHERE type='Expense' AND date BETWEEN $1 AND $2`, [from, to]),
-    dbQuery(`SELECT COALESCE(SUM(amount),0) t FROM transactions WHERE type='Income' AND date BETWEEN $1 AND $2`, [from, to]),
-  ]);
-  const total  = +expR.rows[0].t;
-  const income = +incR.rows[0].t;
-  const daily  = total / dD;
-  const proj   = daily * dM;
-  return `📈 *Run Rate — ${now.toLocaleString('default',{month:'long'})}*\n\n📅 Day ${dD} of ${dM}\n💸 Spent: *${fmtE(total)}*\n📊 Daily avg: *${fmtE(daily)}*\n🔮 Projected: *${fmtE(proj)}*\n${income > 0 ? `💰 Income: ${fmtE(income)}\n${proj <= income ? '✅':'❌'} Projected ${proj <= income ? 'within':'OVER'} income` : '⚠️ Income not set — send: _income 4000 salary_'}`;
+  const expR = await dbQuery(
+    `SELECT COALESCE(SUM(amount),0) t FROM transactions WHERE type='Expense' AND date BETWEEN $1 AND $2`,
+    [from, to]
+  );
+  const total = +expR.rows[0].t;
+  const sisa  = 500 - total;
+  return `💸 You've spent *${fmtE(total)}* out of *€500.00* monthly target spend\n${sisa >= 0 ? `✅ *${fmtE(sisa)}* remaining this month` : `⚠️ *${fmtE(Math.abs(sisa))}* over target`}`;
 }
 
 async function buildTop() {
@@ -361,24 +356,26 @@ async function handleReceiptAsync(imageUrl, mimeType, waNum, person, caption) {
       msg = `❌ Could not read the receipt.\n\nTip: Take photo straight-on, good lighting, then resend.`;
     } else {
       const catOverride = ALL_CATS.find(c => caption?.toLowerCase().includes(c.toLowerCase()));
-      if (scanned.items.length > 5) {
+
+      // Always save EVERY item as a separate transaction (no collapsing)
+      let saved = 0;
+      for (const item of scanned.items) {
+        if (!item.amount || item.amount <= 0) continue;
         await dbQuery(
           `INSERT INTO transactions (date,type,category,amount,notes,person,wa_number,source)
            VALUES (NOW(),'Expense',$1,$2,$3,$4,$5,'receipt')`,
-          [catOverride || 'Groceries', scanned.total, `${scanned.store || 'Store'} receipt`, person, waNum]
+          [catOverride || item.category || 'Groceries', item.amount, item.description, person, waNum]
         );
-      } else {
-        for (const item of scanned.items) {
-          if (!item.amount || item.amount <= 0) continue;
-          await dbQuery(
-            `INSERT INTO transactions (date,type,category,amount,notes,person,wa_number,source)
-             VALUES (NOW(),'Expense',$1,$2,$3,$4,$5,'receipt')`,
-            [catOverride || item.category || 'Groceries', item.amount, item.description, person, waNum]
-          );
-        }
+        saved++;
       }
-      const lines = scanned.items.slice(0, 5).map(i => `• ${i.description}: ${fmtE(i.amount)}`).join('\n');
-      msg = `🧾 *Receipt Scanned!* (${person})\n\n🏪 ${scanned.store || 'Store'}\n\n${lines}${scanned.items.length > 5 ? `\n_+${scanned.items.length - 5} more_` : ''}\n\n💸 *Total: ${fmtE(scanned.total)}*\n✅ Saved!`;
+
+      // List ALL items in WA reply
+      const allLines = scanned.items
+        .filter(i => i.amount > 0)
+        .map(i => `• ${i.description}: *${fmtE(i.amount)}*`)
+        .join('\n');
+
+      msg = `🧾 *Receipt Scanned!* (${person})\n\n🏪 ${scanned.store || 'Store'}\n\n${allLines}\n\n💸 *Total: ${fmtE(scanned.total)}*\n✅ ${saved} item${saved>1?'s':''} saved to dashboard!`;
     }
   } catch (err) {
     msg = `❌ Receipt scan failed: ${err.message}`;
