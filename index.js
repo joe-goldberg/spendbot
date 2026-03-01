@@ -103,6 +103,7 @@ function detectIntent(txt) {
   if (/^(help|bantuan|guide)(\s|$)/.test(t))                return 'help';
   if (/^(runrate|run rate|proyeksi)(\s|$)/.test(t))         return 'runrate';
   if (/^(income|salary|gaji|pemasukan)\s+[\d.,]+/.test(t))  return 'income';
+  if (/^(invest|investment|portfolio)\s*(update|list|show)?(\s|$)/.test(t)) return 'invest';
   return 'expense';
 }
 
@@ -336,6 +337,68 @@ async function handleIncome(text, waNum, person) {
   return `✅ *Income recorded!* (${person})\n\n💰 *${fmtE(amount)}* — ${notes}\n📅 ${new Date().toLocaleDateString('en-GB')}\n\n💸 Expenses this month: ${fmtE(spent)}\n${sisa >= 0 ? '✅':'❌'} Net: *${fmtE(Math.abs(sisa))}* ${sisa >= 0 ? 'surplus':'deficit'}`;
 }
 
+// Investment stored as JSON in a dedicated table
+async function handleInvestment(text, waNum, person) {
+  const t = text.toLowerCase();
+
+  // "invest list" or "invest show" → show current portfolio
+  if (t.match(/^(invest|investment|portfolio)\s*(list|show|status)?\s*$/)) {
+    const row = await dbQuery(
+      `SELECT data, updated_at FROM investments ORDER BY updated_at DESC LIMIT 1`
+    );
+    if (!row.rows.length) return '📊 No investment data yet.\n\nSend: _invest update_ followed by your portfolio.';
+    const inv   = JSON.parse(row.rows[0].data);
+    const total = inv.reduce((s, i) => s + (i.amountRp || 0), 0);
+    const lines = inv.map(i => `• ${i.type}: ${i.amountRp ? 'Rp'+Math.round(i.amountRp).toLocaleString('id') : '€'+(i.amountEur||0)}`).join('\n');
+    const date  = new Date(row.rows[0].updated_at).toLocaleDateString('en-GB');
+    return `📊 *Portfolio as of ${date}*\n\n${lines}\n\n*Total: Rp${Math.round(total).toLocaleString('id')}*`;
+  }
+
+  // "invest update\nStock: Rp34.895.000\n..." → parse and save
+  const lines = text.split('\n').slice(1).filter(l => l.trim());
+  if (!lines.length) {
+    return `📊 *How to update portfolio:*\n\nSend multi-line message:\n\`\`\`\ninvest update\nStock: Rp34895000\nMutual Fund: Rp68511875\nBond SR019: Rp200000000\nCash BNI: Rp5000000\nCash Wise: EUR9338\n\`\`\`\n\nThis overwrites the entire portfolio.`;
+  }
+
+  const parsed = lines.map(line => {
+    const m = line.match(/^(.+?):\s*(?:Rp|IDR)?\s*([\d.,]+)|^(.+?):\s*(?:EUR|€|EURO)\s*([\d.,]+)/i);
+    if (!m) return null;
+    if (m[1]) {
+      // IDR amount
+      const rp  = parseFloat(m[2].replace(/[.,]/g, '').replace(',', '.'));
+      const cat = m[1].toLowerCase().includes('stock')   ? 'stock'
+                : m[1].toLowerCase().includes('mutual')  ? 'mutual_fund'
+                : m[1].toLowerCase().includes('bond')    ? 'bond'
+                : 'cash';
+      return { type: m[1].trim(), category: cat, amountRp: rp };
+    } else {
+      // EUR amount (e.g. Cash Wise)
+      const eur = parseFloat(m[4].replace(',', '.'));
+      return { type: m[3].trim(), category: 'cash', amountEur: eur };
+    }
+  }).filter(Boolean);
+
+  if (!parsed.length) return '❌ Could not parse any investments. Check the format and try again.';
+
+  // Ensure table exists and save
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS investments (
+      id SERIAL PRIMARY KEY,
+      data TEXT NOT NULL,
+      person VARCHAR(50),
+      updated_at TIMESTAMP DEFAULT NOW()
+    )
+  `);
+  await pool.query(
+    `INSERT INTO investments (data, person, updated_at) VALUES ($1, $2, NOW())`,
+    [JSON.stringify(parsed), person]
+  );
+
+  const total = parsed.reduce((s, i) => s + (i.amountRp || 0), 0);
+  const lines2 = parsed.map(i => `✓ ${i.type}: ${i.amountRp ? 'Rp'+Math.round(i.amountRp).toLocaleString('id') : '€'+(i.amountEur||0)}`).join('\n');
+  return `✅ *Portfolio updated!* (${person})\n\n${lines2}\n\n*${parsed.length} items saved. Refresh dashboard to see update.*`;
+}
+
 async function handleUndo(waNum) {
   const row = await dbQuery(
     `SELECT id, category, amount, notes FROM transactions WHERE wa_number=$1 ORDER BY created_at DESC LIMIT 1`,
@@ -409,7 +472,7 @@ app.post('/webhook', async (req, res) => {
   const mediaType = body.MediaContentType0 || 'image/jpeg';
   const person    = getPerson(waNum);
 
-  console.log(`[WA] ${person} | media:${numMedia} | "${text}"`);
+  console.log(`[WA] raw: ${waNum} → person: "${person}" | media:${numMedia} | "${text}"`);
 
   // Helper to send TwiML response
   const twiml = (msg) => {
@@ -440,7 +503,7 @@ app.post('/webhook', async (req, res) => {
       case 'top':      reply = await buildTop(); break;
       case 'undo':     reply = await handleUndo(waNum); break;
       case 'help':     reply = buildHelp(); break;
-      case 'income':   reply = await handleIncome(text, waNum, person); break;
+      case 'invest':   reply = await handleInvestment(text, waNum, person); break;
       case 'expense':  reply = await handleExpense(text, waNum, person); break;
       default:         reply = buildHelp();
     }
@@ -554,6 +617,31 @@ app.post('/api/import', async (req, res) => {
   }
 });
 
+app.get('/api/investments', async (req, res) => {
+  try {
+    // Check if table exists first
+    const tableCheck = await pool.query(`
+      SELECT EXISTS (
+        SELECT FROM information_schema.tables WHERE table_name = 'investments'
+      ) as exists
+    `);
+    if (!tableCheck.rows[0].exists) {
+      return res.json({ success: true, data: null, message: 'No investment data yet' });
+    }
+    const row = await pool.query(
+      `SELECT data, updated_at FROM investments ORDER BY updated_at DESC LIMIT 1`
+    );
+    if (!row.rows.length) return res.json({ success: true, data: null });
+    res.json({
+      success: true,
+      data: JSON.parse(row.rows[0].data),
+      updatedAt: row.rows[0].updated_at,
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 app.delete('/api/transactions/:id', async (req, res) => {
   if (!dbReady) return res.status(503).json({ success: false, error: 'Database not ready' });
   try {
@@ -572,6 +660,21 @@ app.get('/', (req, res) => {
     ai: process.env.ANTHROPIC_API_KEY ? '✅ configured' : '⚠️ not set',
     twilio: process.env.TWILIO_ACCOUNT_SID ? '✅ configured' : '⚠️ not set',
     uptime: process.uptime().toFixed(0) + 's',
+  });
+});
+
+// Debug endpoint — lihat config MEMBERS yang aktif
+// Buka: https://URL-RAILWAY-ANDA.up.railway.app/debug/members
+app.get('/debug/members', (req, res) => {
+  res.json({
+    info: 'Nomor yang terdaftar di MEMBERS config',
+    members: Object.entries(MEMBERS).map(([num, name]) => ({
+      number: num,
+      name,
+      // Sensor sebagian nomor untuk keamanan
+      masked: num.slice(0, 14) + '****',
+    })),
+    tip: 'Buka Railway → Logs, lihat baris [WA] raw: untuk nomor lengkap yang masuk',
   });
 });
 
