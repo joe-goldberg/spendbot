@@ -10,6 +10,17 @@ app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
 
 // =============================================
+// CORS — izinkan dashboard Netlify terhubung
+// =============================================
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Headers', 'Content-Type');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  if (req.method === 'OPTIONS') return res.sendStatus(200);
+  next();
+});
+
+// =============================================
 // DATA SEMENTARA (disimpan di memori)
 // Nanti bisa diganti database sesungguhnya
 // =============================================
