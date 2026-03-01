@@ -20,8 +20,8 @@ app.use((req, res, next) => {
 // ⚙️  CONFIG — Edit nomor WA Anda di sini
 // ==========================================================
 const MEMBERS = {
-  'whatsapp:+NOMOR_ANDA':  'You',
-  'whatsapp:+NOMOR_ISTRI': 'Spouse',
+  'whatsapp:+6285878894158':  'You',
+  'whatsapp:+6281224803690': 'Spouse',
 };
 
 const TARGET_DISCRETIONARY = 500; // Euro
