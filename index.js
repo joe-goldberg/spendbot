@@ -648,6 +648,20 @@ async function handleRecurringAdd(text) {
 
 async function handleInvestment(text, chatId, person) {
   const t = text.toLowerCase();
+  if (t.match(/^(invest|investment|portfolio)\s*revert\s*$/)) {
+    const rows = await dbQuery(
+      `SELECT id, updated_at FROM investments ORDER BY updated_at DESC LIMIT 2`
+    );
+    if (rows.rows.length < 2) return '❌ No previous investment data to revert to.';
+    const toDelete = rows.rows[0].id;
+    const revertTo = rows.rows[1];
+    await dbQuery(`DELETE FROM investments WHERE id=$1`, [toDelete]);
+    const inv = JSON.parse((await dbQuery(`SELECT data FROM investments WHERE id=$1`, [revertTo.id])).rows[0].data);
+    const total = inv.reduce((s,i) => s + (i.amountRp || 0), 0);
+    const lines = inv.map(i => `✓ ${i.type}: ${i.amountRp ? 'Rp'+Math.round(i.amountRp).toLocaleString('id') : '€'+(i.amountEur||0)}`).join('\n');
+    return `↩️ *Reverted to previous portfolio!*\n\n${lines}\n\n*Total: Rp${Math.round(total).toLocaleString('id')}*\n_As of ${new Date(revertTo.updated_at).toLocaleDateString('en-GB')}_`;
+  }
+
   if (t.match(/^(invest|investment|portfolio)\s*(list|show|status)?\s*$/)) {
     const row = await dbQuery(`SELECT data, updated_at FROM investments ORDER BY updated_at DESC LIMIT 1`);
     if (!row.rows.length) return '📊 No investment data yet.\n\nSend: _invest update_ followed by your portfolio.';
