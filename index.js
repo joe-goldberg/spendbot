@@ -21,8 +21,8 @@ app.use((req, res, next) => {
 // MEMBERS: map Telegram chat_id (string) → display name
 // Fill these after getting Chat IDs from /getUpdates
 const MEMBERS = {
-  '943697741':     'You',
-  '8647197360':  'Spouse',
+  'TELEGRAM_CHAT_ID_YOU':     'You',
+  'TELEGRAM_CHAT_ID_SPOUSE':  'Spouse',
 };
 
 // All known Telegram Chat IDs (for broadcasts)
@@ -110,6 +110,11 @@ async function initDB() {
         person VARCHAR(50),
         updated_at TIMESTAMP DEFAULT NOW()
       );
+    `);
+    // Migration: safely add new columns to existing tables
+    await p.query(`
+      ALTER TABLE transactions ADD COLUMN IF NOT EXISTS chat_id VARCHAR(50);
+      ALTER TABLE transactions ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'telegram';
     `);
     dbReady = true;
     console.log('✅ Database ready (v3)');
@@ -524,21 +529,29 @@ function buildHelp() {
 // ==========================================================
 // 💬  COMMAND HANDLERS
 // ==========================================================
-async function handleExpense(text, chatId, person) {
-  // Duplicate detection: check for similar expense in last 30 min
-  const thirtyMinAgo = new Date(Date.now() - 30 * 60 * 1000);
+async function handleExpense(text, chatId, person, skipDupCheck = false) {
   const parsed = await parseExpenseText(text);
   if (!parsed?.amount || parsed.amount <= 0) {
-    return `🤔 Could not parse expense.\n\nTry: _coffee 3.50_ or _groceries 45 Rimi_\nType /help for all commands.`;
+    return `🤔 Could not parse expense.
+
+Try: _coffee 3.50_ or _groceries 45 Rimi_
+Type /help for all commands.`;
   }
 
-  // Duplicate check
-  const dupCheck = await dbQuery(
-    `SELECT id, category, amount FROM transactions WHERE chat_id=$1 AND type='Expense' AND amount=$2 AND created_at >= $3`,
-    [String(chatId), parsed.amount, thirtyMinAgo]
-  );
-  if (dupCheck.rows.length > 0) {
-    return `⚠️ *Possible duplicate!*\n\n${fmtE(parsed.amount)} in ${parsed.category} was already recorded in the last 30 min.\n\nSend again to confirm, or type _undo_ to remove the previous one.`;
+  // Duplicate check — skip if user sent 'confirm ...'
+  if (!skipDupCheck) {
+    const thirtyMinAgo = new Date(Date.now() - 30 * 60 * 1000);
+    const dupCheck = await dbQuery(
+      `SELECT id FROM transactions WHERE chat_id=$1 AND type='Expense' AND amount=$2 AND created_at >= $3`,
+      [String(chatId), parsed.amount, thirtyMinAgo]
+    );
+    if (dupCheck.rows.length > 0) {
+      return `⚠️ *Possible duplicate!*
+
+${fmtE(parsed.amount)} sudah dicatat dalam 30 menit terakhir.
+
+Ketik _confirm ${text}_ untuk tetap catat, atau _undo_ untuk hapus yang sebelumnya.`;
+    }
   }
 
   await dbQuery(
@@ -703,7 +716,7 @@ async function handleReceiptPhoto(fileId, chatId, person) {
       if (!item.amount || item.amount <= 0) continue;
       await dbQuery(
         `INSERT INTO transactions (date,type,category,amount,notes,person,chat_id,source) VALUES (NOW(),'Expense',$1,$2,$3,$4,$5,'receipt')`,
-        [item.category || 'Groceries', item.amount, item.description, person, String(chatId)]
+        [item.category || 'Other', item.amount, item.description, person, String(chatId)]
       );
       saved++;
     }
@@ -924,6 +937,7 @@ app.post('/tg-webhook', async (req, res) => {
         return;
       case 'invest':   reply = await handleInvestment(text, chatId, person); break;
       case 'income':   reply = await handleIncome(text, chatId, person); break;
+      case 'confirm':  reply = await handleExpense(text.replace(/^confirm\s+/i,''), chatId, person, true); break;
       case 'expense':  reply = await handleExpense(text, chatId, person); break;
       default:         reply = buildHelp();
     }
