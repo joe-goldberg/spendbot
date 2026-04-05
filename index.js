@@ -529,29 +529,13 @@ function buildHelp() {
 // ==========================================================
 // 💬  COMMAND HANDLERS
 // ==========================================================
-async function handleExpense(text, chatId, person, skipDupCheck = false) {
+async function handleExpense(text, chatId, person) {
   const parsed = await parseExpenseText(text);
   if (!parsed?.amount || parsed.amount <= 0) {
     return `🤔 Could not parse expense.
 
 Try: _coffee 3.50_ or _groceries 45 Rimi_
 Type /help for all commands.`;
-  }
-
-  // Duplicate check — skip if user sent 'confirm ...'
-  if (!skipDupCheck) {
-    const thirtyMinAgo = new Date(Date.now() - 30 * 60 * 1000);
-    const dupCheck = await dbQuery(
-      `SELECT id FROM transactions WHERE chat_id=$1 AND type='Expense' AND amount=$2 AND created_at >= $3`,
-      [String(chatId), parsed.amount, thirtyMinAgo]
-    );
-    if (dupCheck.rows.length > 0) {
-      return `⚠️ *Possible duplicate!*
-
-${fmtE(parsed.amount)} sudah dicatat dalam 30 menit terakhir.
-
-Ketik _confirm ${text}_ untuk tetap catat, atau _undo_ untuk hapus yang sebelumnya.`;
-    }
   }
 
   await dbQuery(
@@ -937,7 +921,6 @@ app.post('/tg-webhook', async (req, res) => {
         return;
       case 'invest':   reply = await handleInvestment(text, chatId, person); break;
       case 'income':   reply = await handleIncome(text, chatId, person); break;
-      case 'confirm':  reply = await handleExpense(text.replace(/^confirm\s+/i,''), chatId, person, true); break;
       case 'expense':  reply = await handleExpense(text, chatId, person); break;
       default:         reply = buildHelp();
     }
