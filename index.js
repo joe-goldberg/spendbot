@@ -556,8 +556,7 @@ Type /help for all commands.`;
   ]);
 
   const discSpent = +discR.rows[0].t;
-  const projDisc = discSpent > 0 ? (discSpent / dD) * dM : 0;
-  const projPct = Math.min((projDisc / TARGET_DISCRETIONARY) * 100, 999).toFixed(0);
+  const projPct = Math.min((discSpent / TARGET_DISCRETIONARY) * 100, 999).toFixed(0);
   const dateStr = now.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
 
   let alert = '';
