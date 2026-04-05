@@ -555,10 +555,14 @@ Type /help for all commands.`;
     dbQuery(`SELECT COALESCE(SUM(amount),0) t FROM transactions WHERE type='Expense' AND date BETWEEN $1 AND $2 AND NOT (category = ANY($3))`, [from, to, EXEMPT_CATS]),
   ]);
 
-  const proj = (+totR.rows[0].t / dD) * dM;
-  const discSisa = TARGET_DISCRETIONARY - +discR.rows[0].t;
+  const discSpent = +discR.rows[0].t;
+  const projDisc = discSpent > 0 ? (discSpent / dD) * dM : 0;
+  const projPct = Math.min((projDisc / TARGET_DISCRETIONARY) * 100, 999).toFixed(0);
+  const dateStr = now.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+
   let alert = '';
   if (!EXEMPT_CATS.includes(parsed.category)) {
+    const discSisa = TARGET_DISCRETIONARY - discSpent;
     if      (discSisa < 0)   alert = `\n⚠️ *Discretionary OVER by ${fmtE(Math.abs(discSisa))}!*`;
     else if (discSisa < 100) alert = `\n⚠️ Only *${fmtE(discSisa)}* left of €${TARGET_DISCRETIONARY} discretionary`;
   }
@@ -574,7 +578,7 @@ Type /help for all commands.`;
     else if (pct >= 80) alert += `\n🟡 *${parsed.category} at ${pct.toFixed(0)}% of budget* (${fmtE(+catSpent)} / ${fmtE(budgetAmt)})`;
   }
 
-  return `✅ *Recorded!* (${person})\n\n📂 ${parsed.category}\n💸 *${fmtE(parsed.amount)}*\n📝 ${parsed.notes}\n📅 ${now.toLocaleDateString('en-GB')}\n\n📈 Projected: *${fmtE(proj)}* end-of-month${alert}`;
+  return `✅ *Recorded!* (${person})\n\n📂 ${parsed.category}\n💸 *${fmtE(parsed.amount)}*\n📝 ${parsed.notes}\n📅 ${now.toLocaleDateString('en-GB')}\n\n📊 Total expense as of ${dateStr}: *${fmtE(discSpent)}* (${projPct}% out of €${TARGET_DISCRETIONARY} by end-of-month)${alert}`;
 }
 
 async function handleIncome(text, chatId, person) {
