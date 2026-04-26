@@ -755,43 +755,37 @@ async function updateStreak(chatId) {
 // ⏰  CRON SCHEDULER
 // ==========================================================
 function startCron() {
-  // Simple cron using setInterval checks — no external library needed
   const MINUTE = 60 * 1000;
+  let lastRun = {};
 
   setInterval(async () => {
     const now = new Date();
-    const h = now.getUTCHours() + TIMEZONE_OFFSET;
-    const m = now.getUTCMinutes();
-    const dow = now.getUTCDay(); // 0=Sun, 1=Mon...6=Sat
+    const localMs = now.getTime() + (TIMEZONE_OFFSET * 60 * 60 * 1000);
+    const local = new Date(localMs);
+    const h   = local.getUTCHours();
+    const m   = local.getUTCMinutes();
+    const dow = local.getUTCDay();
+    const dateStr = local.toISOString().split('T')[0];
+    const key = (tag) => `${tag}-${dateStr}-${h}-${m}`;
 
-    // Auto-insert recurring expenses at 00:05 local time
-    if (h % 24 === 0 && m === 5) {
-      await autoInsertRecurring(dow);
-    }
+    const run = async (tag, fn) => {
+      if (lastRun[key(tag)]) return;
+      lastRun[key(tag)] = true;
+      try { await fn(); } catch(e) { console.error(`Cron ${tag} error:`, e.message); }
+      if (Object.keys(lastRun).length > 100) {
+        Object.keys(lastRun).slice(0, 50).forEach(k => delete lastRun[k]);
+      }
+    };
 
-    // Daily reminder at 20:00 local
-    if (h % 24 === 20 && m === 0) {
-      await sendDailyReminder();
-    }
-
-    // Daily summary at 21:00 local
-    if (h % 24 === 21 && m === 0) {
-      await sendDailySummary();
-    }
-
-    // Weekly summary: Sunday at 09:00 local
-    if (dow === 0 && h % 24 === 9 && m === 0) {
-      await sendWeeklySummary();
-    }
-
-    // Monthly summary: 1st of month at 08:00 local
-    if (now.getUTCDate() === 1 && h % 24 === 8 && m === 0) {
-      await sendMonthlySummary();
-    }
+    if (h === 0  && m === 5)  await run('recurring', () => autoInsertRecurring(dow));
+    if (h === 20 && m === 0)  await run('reminder',  () => sendDailyReminder());
+    if (h === 21 && m === 0)  await run('daily',     () => sendDailySummary());
+    if (dow === 0 && h === 9 && m === 0) await run('weekly', () => sendWeeklySummary());
+    if (local.getUTCDate() === 1 && h === 8 && m === 0) await run('monthly', () => sendMonthlySummary());
 
   }, MINUTE);
 
-  console.log('⏰ Cron scheduler started');
+  console.log('⏰ Cron scheduler started (UTC+' + TIMEZONE_OFFSET + ')');
 }
 
 async function autoInsertRecurring(dow) {
