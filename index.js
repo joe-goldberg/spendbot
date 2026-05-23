@@ -777,6 +777,9 @@ function startCron() {
       }
     };
 
+    // Log every hour to confirm cron is alive
+    if (m === 0) console.log(`⏰ Cron tick: ${dateStr} ${h}:00 local (dow=${dow})`);
+
     if (h === 0  && m === 5)  await run('recurring', () => autoInsertRecurring(dow));
     if (h === 20 && m === 0)  await run('reminder',  () => sendDailyReminder());
     if (h === 21 && m === 0)  await run('daily',     () => sendDailySummary());
