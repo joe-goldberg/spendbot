@@ -21,8 +21,8 @@ app.use((req, res, next) => {
 // MEMBERS: map Telegram chat_id (string) → display name
 // Fill these after getting Chat IDs from /getUpdates
 const MEMBERS = {
-  'TELEGRAM_CHAT_ID_YOU':     'You',
-  'TELEGRAM_CHAT_ID_SPOUSE':  'Spouse',
+  '943697741':     'You',
+  '8647197360':  'Spouse',
 };
 
 // All known Telegram Chat IDs (for broadcasts)
