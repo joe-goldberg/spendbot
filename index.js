@@ -354,8 +354,8 @@ async function buildWeeklySummary() {
 }
 
 async function buildMonthlySummary() {
-  const { from: cf, to: ct } = getMonthBounds(0);
-  const { from: pf, to: pt } = getMonthBounds(-1);
+  const { from: cf, to: ct } = getMonthBounds(-1);
+  const { from: pf, to: pt } = getMonthBounds(-2);
   const now = new Date();
 
   const [curr, prevMonthExp, incRow, top5] = await Promise.all([
@@ -377,7 +377,8 @@ async function buildMonthlySummary() {
   }).join('\n');
 
   const top5Lines = top5.rows.map((r,i) => `${i+1}. ${r.category} — *${fmtE(r.amount)}* _(${r.notes})_`).join('\n');
-  const monthName = now.toLocaleString('default', { month: 'long', year: 'numeric' });
+  const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const monthName = lastMonth.toLocaleString('default', { month: 'long', year: 'numeric' });
 
   let msg = `📅 *Monthly Summary — ${monthName}*\n\n`;
   msg += `${catLines}\n\n──────────────\n`;
