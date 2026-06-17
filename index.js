@@ -227,16 +227,53 @@ async function callClaude(messages, system, maxTokens = 600) {
 }
 
 async function parseExpenseText(text) {
+  // --- Regex fallback (fast, no API call needed) ---
+  // Format: "description amount [store]" or "amount description"
+  const regexPatterns = [
+    // "coffee 3.50" or "groceries 45.20 Rimi"
+    /^(.+?)\s+([\d]+[.,]?[\d]*)\s*(.*)$/,
+    // "3.50 coffee"
+    /^([\d]+[.,]?[\d]*)\s+(.+)$/,
+  ];
+
+  let regexResult = null;
+
+  const m1 = text.match(/^(.+?)\s+([\d]+[.,][\d]+|\d+)\s*(.*)$/);
+  if (m1) {
+    const amount = parseFloat(m1[2].replace(',', '.'));
+    const descParts = [m1[1].trim(), m1[3].trim()].filter(Boolean).join(' ');
+    if (amount > 0) {
+      regexResult = { amount, notes: descParts || m1[1].trim(), category: null };
+    }
+  }
+
+  // --- Try Claude API for categorization ---
   const system = `Parse this expense message. Categories: ${ALL_CATS.join(', ')}.
 Amounts in Euro. Respond ONLY with JSON (no markdown):
 {"amount":12.50,"category":"Groceries","notes":"brief description"}`;
+
   try {
     const reply = await callClaude([{ role: 'user', content: text }], system);
-    return JSON.parse(reply.replace(/```json|```/g, '').trim());
+    const parsed = JSON.parse(reply.replace(/```json|```/g, '').trim());
+    if (parsed?.amount && parsed.amount > 0) return parsed;
   } catch (e) {
-    console.error('parseExpenseText error:', e.message);
-    return null;
+    console.error('parseExpenseText Claude error:', e.message);
   }
+
+  // --- Use regex result with best-guess category if Claude failed ---
+  if (regexResult) {
+    const desc = regexResult.notes.toLowerCase();
+    let category = 'Other';
+    if (/coffee|cafe|kopi|teh|tea|minum/.test(desc)) category = 'Lifestyle';
+    else if (/grocer|market|supermarket|rimi|prisma|lidl|food|makanan|sayur/.test(desc)) category = 'Groceries';
+    else if (/bus|tram|transport|taxi|uber|bolt|train|kereta/.test(desc)) category = 'Transportation';
+    else if (/resto|restaurant|lunch|dinner|makan/.test(desc)) category = 'Lifestyle';
+    else if (/gym|sport|fitness/.test(desc)) category = 'Lifestyle';
+    regexResult.category = category;
+    return regexResult;
+  }
+
+  return null;
 }
 
 async function parseReceiptImage(imageBase64, mimeType) {
