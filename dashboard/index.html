@@ -458,7 +458,225 @@ td { padding: 7px 10px; vertical-align: middle; }
   border-left: 2px solid var(--gold);
 }
 #waGuideCard .card-title:hover .sub { color: var(--gold); }
+
+/* TREND CHART */
+.trend-cat-btn {
+  font-family: 'DM Mono', monospace;
+  font-size: 9px;
+  padding: 3px 9px;
+  border-radius: 99px;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+.trend-cat-btn.active {
+  background: var(--cat-color, #636e72);
+  border-color: var(--cat-color, #636e72);
+  color: #1a1a2e;
+  font-weight: 500;
+}
+.trend-cat-btn:not(.active):hover {
+  border-color: var(--cat-color, #636e72);
+  color: var(--cat-color, #636e72);
+}
+
 </style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js">
+// ============================================================
+// TREND CHART
+// ============================================================
+let trendPeriod     = 'month';
+let trendActiveCats = new Set();
+let trendChartInst  = null;
+
+function getISOWeek(date) {
+  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  const dayNum = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  return { year: d.getUTCFullYear(), week: Math.ceil((((d - yearStart) / 86400000) + 1) / 7) };
+}
+
+function getPeriodKey(date, period) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  if (period === 'day')   return `${y}-${m}-${d}`;
+  if (period === 'month') return `${y}-${m}`;
+  if (period === 'week')  {
+    const { year, week } = getISOWeek(date);
+    return `${year}-W${String(week).padStart(2, '0')}`;
+  }
+  return `${y}-${m}`;
+}
+
+const MNAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+function formatPeriodLabel(key) {
+  if (trendPeriod === 'day') {
+    const parts = key.split('-');
+    return `${parts[2]} ${MNAMES[parseInt(parts[1])-1]}`;
+  }
+  if (trendPeriod === 'month') {
+    const parts = key.split('-');
+    return `${MNAMES[parseInt(parts[1])-1]} '${parts[0].slice(2)}`;
+  }
+  if (trendPeriod === 'week') {
+    const parts = key.split('-W');
+    return `W${parts[1]} '${parts[0].slice(2)}`;
+  }
+  return key;
+}
+
+function initTrendCatFilters() {
+  const cats = [...new Set(ALL_DATA.filter(d => d.type === 'Expense').map(d => d.category))].sort();
+  cats.forEach(c => trendActiveCats.add(c));
+
+  const container = document.getElementById('trendCatFilters');
+  if (!container) return;
+  container.innerHTML = cats.map(cat => {
+    const col    = CAT_COLORS[cat] || '#636e72';
+    const active = trendActiveCats.has(cat);
+    return `<button class="trend-cat-btn${active ? ' active' : ''}" data-cat="${cat}"
+      style="--cat-color:${col}" onclick="toggleTrendCat('${cat}', this)">${cat}</button>`;
+  }).join('');
+}
+
+function toggleTrendCat(cat, btn) {
+  if (trendActiveCats.has(cat)) { trendActiveCats.delete(cat); btn.classList.remove('active'); }
+  else                          { trendActiveCats.add(cat);    btn.classList.add('active'); }
+  renderTrendChart();
+}
+
+function trendSelectAll(all) {
+  const cats = [...new Set(ALL_DATA.filter(d => d.type === 'Expense').map(d => d.category))];
+  if (all) cats.forEach(c => trendActiveCats.add(c));
+  else trendActiveCats.clear();
+  document.querySelectorAll('.trend-cat-btn').forEach(btn => btn.classList.toggle('active', all));
+  renderTrendChart();
+}
+
+function setTrendPeriod(period) {
+  trendPeriod = period;
+  ['trendDaily','trendWeekly','trendMonthly'].forEach(id =>
+    document.getElementById(id)?.classList.remove('active'));
+  const map = { day:'trendDaily', week:'trendWeekly', month:'trendMonthly' };
+  document.getElementById(map[period])?.classList.add('active');
+  document.getElementById('trendPeriodLabel').textContent =
+    period === 'day' ? 'BY DAY' : period === 'week' ? 'BY WEEK' : 'BY MONTH';
+  renderTrendChart();
+}
+
+function buildTrendData() {
+  const filtered = filterByRange(ALL_DATA, currentRange).filter(d => d.type === 'Expense');
+  const periodMap = {}, allPeriods = new Set(), allCats = new Set();
+
+  filtered.forEach(d => {
+    const key = getPeriodKey(d.date, trendPeriod);
+    allPeriods.add(key);
+    allCats.add(d.category);
+    if (!periodMap[key]) periodMap[key] = {};
+    periodMap[key][d.category] = (periodMap[key][d.category] || 0) + d.amount;
+  });
+
+  const sortedPeriods = [...allPeriods].sort();
+  const labels = sortedPeriods.map(p => formatPeriodLabel(p));
+
+  const activeCatsWithData = [...trendActiveCats]
+    .filter(cat => allCats.has(cat))
+    .sort((a, b) => {
+      const aT = sortedPeriods.reduce((s, p) => s + (periodMap[p]?.[a] || 0), 0);
+      const bT = sortedPeriods.reduce((s, p) => s + (periodMap[p]?.[b] || 0), 0);
+      return bT - aT;
+    });
+
+  const datasets = activeCatsWithData.map(cat => {
+    const color = CAT_COLORS[cat] || '#636e72';
+    return {
+      label: cat,
+      data: sortedPeriods.map(p => Math.round((periodMap[p]?.[cat] || 0) * 100) / 100),
+      borderColor: color,
+      backgroundColor: color + '18',
+      tension: 0.35,
+      fill: false,
+      pointRadius: sortedPeriods.length > 30 ? 2 : 4,
+      pointHoverRadius: 6,
+      borderWidth: 2,
+    };
+  });
+
+  return { labels, datasets };
+}
+
+function renderTrendChart() {
+  const canvas = document.getElementById('trendChart');
+  if (!canvas || !ALL_DATA.length) return;
+  if (trendChartInst) { trendChartInst.destroy(); trendChartInst = null; }
+
+  const { labels, datasets } = buildTrendData();
+
+  if (!labels.length || !datasets.length) {
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#8892a4';
+    ctx.font = "12px 'DM Mono', monospace";
+    ctx.textAlign = 'center';
+    ctx.fillText('No data for selected filters', canvas.width / 2, canvas.height / 2);
+    return;
+  }
+
+  trendChartInst = new Chart(canvas.getContext('2d'), {
+    type: 'line',
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: {
+          display: true,
+          position: 'top',
+          labels: {
+            color: '#8892a4',
+            font: { family: "'DM Mono', monospace", size: 10 },
+            boxWidth: 10, boxHeight: 10, padding: 10, usePointStyle: true,
+          }
+        },
+        tooltip: {
+          backgroundColor: 'rgba(22,33,62,0.97)',
+          borderColor: 'rgba(255,255,255,0.09)',
+          borderWidth: 1,
+          titleColor: '#e8eaf0',
+          bodyColor: '#8892a4',
+          titleFont: { family: "'DM Mono', monospace", size: 11, weight: '500' },
+          bodyFont:  { family: "'DM Mono', monospace", size: 11 },
+          padding: 10,
+          callbacks: {
+            label: ctx => ` ${ctx.dataset.label}: €${ctx.parsed.y.toFixed(2)}`,
+          }
+        }
+      },
+      scales: {
+        x: {
+          grid:   { color: 'rgba(255,255,255,0.04)' },
+          border: { display: false },
+          ticks:  { color: '#8892a4', font: { family: "'DM Mono', monospace", size: 10 }, maxRotation: 45, maxTicksLimit: 14 },
+        },
+        y: {
+          grid:   { color: 'rgba(255,255,255,0.06)' },
+          border: { display: false },
+          ticks:  { color: '#8892a4', font: { family: "'DM Mono', monospace", size: 10 }, callback: v => `€${v % 1 === 0 ? v : v.toFixed(1)}` },
+          beginAtZero: true,
+        }
+      }
+    }
+  });
+}
+
+</script>
 </head>
 <body>
 
@@ -564,6 +782,43 @@ td { padding: 7px 10px; vertical-align: middle; }
       <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--card-border);font-size:10px;color:var(--muted);">
         ⚡ Target: max €500 excl. Housing, Utilities, Subscriptions, Financial
       </div>
+    </div>
+  </div>
+
+
+  <!-- TREND CHART -->
+  <div class="card" id="trendCard">
+    <div class="card-title">
+      Spending Trend
+      <span class="sub" id="trendPeriodLabel">BY MONTH</span>
+    </div>
+
+    <div style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap;margin-bottom:16px;">
+      <!-- Period -->
+      <div>
+        <div style="font-size:9px;color:var(--muted);letter-spacing:1px;text-transform:uppercase;margin-bottom:6px;">Period</div>
+        <div class="date-filter">
+          <button class="df-btn" id="trendDaily"   onclick="setTrendPeriod('day')">Daily</button>
+          <button class="df-btn" id="trendWeekly"  onclick="setTrendPeriod('week')">Weekly</button>
+          <button class="df-btn active" id="trendMonthly" onclick="setTrendPeriod('month')">Monthly</button>
+        </div>
+      </div>
+
+      <!-- Category filter pills -->
+      <div style="flex:1;min-width:180px;">
+        <div style="font-size:9px;color:var(--muted);letter-spacing:1px;text-transform:uppercase;margin-bottom:6px;">Categories</div>
+        <div id="trendCatFilters" style="display:flex;flex-wrap:wrap;gap:5px;"></div>
+      </div>
+
+      <!-- All / None -->
+      <div style="align-self:flex-end;display:flex;gap:6px;">
+        <button class="btn" onclick="trendSelectAll(true)"  style="font-size:10px;padding:5px 10px;">All</button>
+        <button class="btn" onclick="trendSelectAll(false)" style="font-size:10px;padding:5px 10px;">None</button>
+      </div>
+    </div>
+
+    <div style="position:relative;height:300px;">
+      <canvas id="trendChart"></canvas>
     </div>
   </div>
 
@@ -1453,6 +1708,8 @@ function sortTable(key) {
   const el = document.getElementById('th-'+key);
   if (el) el.classList.add('sorted');
   renderTable();
+  initTrendCatFilters();
+  renderTrendChart();
 }
 
 function renderTable() {
