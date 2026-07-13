@@ -298,7 +298,6 @@ Amounts in Euro. Respond ONLY with JSON (no markdown):
 }
 
 async function parseReceiptImage(imageBase64, mimeType) {
-  const system = `You are a receipt scanner. Extract all items.
 const system = `You are a receipt scanner. Extract all line items.
 Assign each item ONE category from: ${ALL_CATS.join(', ')}.
 Key rules:
