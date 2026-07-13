@@ -31,8 +31,16 @@ function getAllChatIds() {
 }
 
 const TARGET_DISCRETIONARY = 500; // Euro
-const EXEMPT_CATS = ['Housing', 'Utilities', 'Subscriptions', 'Financial'];
-const ALL_CATS = ['Groceries','Transportation','Housing','Utilities','Subscriptions','Lifestyle','Financial','Home Care','Household','Other'];
+const EXEMPT_CATS = ['Housing', 'Utilities', 'Subscriptions', 'Financial', 'Medical'];
+const ALL_CATS = [
+  'Eggs','Chicken','Meat & Seafood','Vegetables','Fruits','Dairy',
+  'Rice & Staples','Bread & Bakery','Snacks','Instant Noodles','Drinks',
+  'Condiments','Asian Ingredients','Dining Out',
+  'Personal Care','Baby & Kids','Home Supplies','Kitchen Equipment','Home Equipment',
+  'Housing','Utilities','Subscriptions','Transportation','Financial',
+  'Entertainment','Clothing','Gifts & Flowers','Education',
+  'Medical','Other'
+];
 const TIMEZONE_OFFSET = 3; // EET/EEST (Estonia) — UTC+3 in summer, adjust to 2 in winter
 
 // ==========================================================
@@ -248,9 +256,22 @@ async function parseExpenseText(text) {
   }
 
   // --- Try Claude API for categorization ---
-  const system = `Parse this expense message. Categories: ${ALL_CATS.join(', ')}.
+  const system = `Parse this expense message into ONE category from: ${ALL_CATS.join(', ')}.
+Key rules:
+- Eggs/kanamunad → Eggs | raw chicken/broiler/ayam → Chicken | fish/meat/lamb/udang → Meat & Seafood
+- Milk/yogurt/cheese/butter → Dairy | fresh veg/onion/garlic/potato → Vegetables | banana/apple/fruit → Fruits
+- Rice/flour/sugar/oil/pasta → Rice & Staples | bread/toast/röstsai → Bread & Bakery
+- Chips/cookies/chocolate/candy → Snacks | indomie/kiirnuudlid/noodles → Instant Noodles
+- Coffee/tea/juice/soda (bottled) → Drinks | sauces/spices/vinegar → Condiments
+- Restaurant/cafe/lunch/dinner/takeout → Dining Out
+- Shampoo/soap/hygiene/cosmetics → Personal Care | diapers/baby items/toys → Baby & Kids
+- Cleaning/toilet paper/trash bags → Home Supplies | pots/pans/cookware → Kitchen Equipment | furniture/appliances → Home Equipment
+- Rent → Housing | electricity/water/gas/internet/phone → Utilities | streaming/apps → Subscriptions
+- Bus/tram/taxi/flight/car → Transportation | insurance/bank fees/koperasi → Financial
+- Cinema/games/concert → Entertainment | apparel/shoes → Clothing | gifts/flowers → Gifts & Flowers
+- Tuition/books/courses → Education | doctor/medicine/pharmacy → Medical
 Amounts in Euro. Respond ONLY with JSON (no markdown):
-{"amount":12.50,"category":"Groceries","notes":"brief description"}`;
+{"amount":12.50,"category":"Dining Out","notes":"brief description"}`;
 
   try {
     const reply = await callClaude([{ role: 'user', content: text }], system);
@@ -278,9 +299,19 @@ Amounts in Euro. Respond ONLY with JSON (no markdown):
 
 async function parseReceiptImage(imageBase64, mimeType) {
   const system = `You are a receipt scanner. Extract all items.
-Categories: ${ALL_CATS.join(', ')}.
+const system = `You are a receipt scanner. Extract all line items.
+Assign each item ONE category from: ${ALL_CATS.join(', ')}.
+Key rules:
+- Eggs/kanamunad → Eggs | raw chicken/broiler → Chicken | fish/meat/lamb → Meat & Seafood
+- Milk/yogurt/cheese/butter → Dairy | fresh veg/onion/garlic → Vegetables | banana/apple/fruit → Fruits
+- Rice/flour/sugar/oil → Rice & Staples | bread/toast → Bread & Bakery
+- Chips/cookies/chocolate/candy → Snacks | noodles/indomie → Instant Noodles
+- Coffee/tea/juice/soda → Drinks | sauces/spices → Condiments | soy sauce/fish sauce/tofu/tempe → Asian Ingredients
+- Restaurant/cafe receipt (single total) → Dining Out
+- Hygiene/soap/shampoo/cosmetics → Personal Care | baby/diapers/toys → Baby & Kids
+- Cleaning/trash bags/toilet paper → Home Supplies
 Respond ONLY with JSON (no markdown):
-{"store":"name","total":25.50,"items":[{"description":"Item","amount":5.00,"category":"Groceries"}]}`;
+{"store":"name","total":25.50,"items":[{"description":"Item","amount":5.00,"category":"Vegetables"}]}`;
   const reply = await callClaude([{
     role: 'user',
     content: [
